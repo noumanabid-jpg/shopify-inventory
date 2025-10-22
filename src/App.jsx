@@ -73,43 +73,59 @@ export default function App() {
   /* ----------- Counting: Scan field + mode ----------- */
   const [scanMode, setScanMode] = useState("count"); // 'count' | 'filter'
   const [scanInput, setScanInput] = useState("");
-  const [scanLog, setScanLog] = useState([]); // [{sku, name, ts}]
+  const [scanLog, setScanLog] = useState([]); // [{sku, name, ts}]  (used only in 'count' mode)
+  const [filterSku, setFilterSku] = useState(""); // active filter in 'filter' mode
   const scanTimerRef = useRef(null);
 
-  const scheduleAutoSubmit = (fn) => {
+  const scheduleAuto = (fn) => {
     if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
     scanTimerRef.current = setTimeout(fn, 180);
+  };
+
+  const clearScans = () => {
+    if (scanMode === "count") {
+      setScanLog([]);
+    } else {
+      setFilterSku("");
+    }
+    setScanInput("");
   };
 
   const submitScan = async () => {
     const val = (scanInput || "").trim();
     if (!val || !sessionId) return;
 
+    // Locate SKU in current city
     const row = rows.find((r) => r.city === city && r.sku === val);
-    // Always log what was scanned (even if not found)
+    setScanInput("");
+
+    if (scanMode === "filter") {
+      // No history; just set active filter
+      setFilterSku(val);
+      return;
+    }
+
+    // COUNT MODE: record + increment
     setScanLog((prev) => [
       { sku: val, name: row?.name || "(not found)", ts: Date.now() },
       ...prev,
     ]);
-    setScanInput("");
 
     if (!row) return;
+    const next = (row.counted_qty ?? 0) + 1;
 
-    if (scanMode === "count") {
-      // optimistic +1
-      const next = (row.counted_qty ?? 0) + 1;
-      setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, counted_qty: next } : r)));
-      try {
-        await api("counts", {
-          method: "PATCH",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ sessionId, id: row.id, counted_qty: next }),
-        });
-      } catch (e) {
-        console.error(e);
-      }
+    // optimistic UI
+    setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, counted_qty: next } : r)));
+
+    try {
+      await api("counts", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId, id: row.id, counted_qty: next }),
+      });
+    } catch (e) {
+      console.error(e);
     }
-    // in filter mode, no count change; filtering is computed from scanLog
   };
 
   /* ----------- Destructions: Scan field ----------- */
@@ -117,14 +133,16 @@ export default function App() {
   const [dScanLog, setDScanLog] = useState([]); // [{sku, name, ts}]
   const dScanTimerRef = useRef(null);
 
-  const scheduleDAutoSubmit = (fn) => {
+  const scheduleDAuto = (fn) => {
     if (dScanTimerRef.current) clearTimeout(dScanTimerRef.current);
     dScanTimerRef.current = setTimeout(fn, 180);
   };
 
-  const [destroySku, setDestroySku] = useState("");
-  const [destroyQty, setDestroyQty] = useState("");
-  const [destroyReason, setDestroyReason] = useState("Poor quality");
+  const clearDScans = () => {
+    setDScanLog([]);
+    setDScanInput("");
+    setDestroySku("");
+  };
 
   const submitDScan = () => {
     const val = (dScanInput || "").trim();
@@ -132,9 +150,7 @@ export default function App() {
     const row = rows.find((r) => r.city === city && r.sku === val);
     setDScanLog((prev) => [{ sku: val, name: row?.name || "(not found)", ts: Date.now() }, ...prev]);
     setDScanInput("");
-    if (row) {
-      setDestroySku(row.sku); // prefill SKU box for quick add
-    }
+    if (row) setDestroySku(row.sku); // prefill
   };
 
   /* load sessions */
@@ -247,15 +263,18 @@ export default function App() {
     }
   };
 
-  /* city-filtered view */
-  const scannedSet = useMemo(() => new Set(scanLog.map((s) => s.sku)), [scanLog]);
+  /* city-filtered view + filter on scan */
   const filtered = useMemo(() => {
     let base = rows.filter((r) => r.city === city);
-    if (scanMode === "filter" && scannedSet.size > 0) {
-      base = base.filter((r) => scannedSet.has(r.sku));
+    if (scanMode === "filter" && filterSku) {
+      // exact match preferred; fallback to contains on SKU/Name for manual typing
+      const q = filterSku.toLowerCase();
+      base = base.filter(
+        (r) => r.sku === filterSku || r.sku.toLowerCase().includes(q) || r.name.toLowerCase().includes(q)
+      );
     }
     return base;
-  }, [rows, city, scanMode, scannedSet]);
+  }, [rows, city, scanMode, filterSku]);
 
   /* totals */
   const totals = useMemo(() => {
@@ -276,6 +295,9 @@ export default function App() {
   }, [filtered]);
 
   /* destructions CRUD */
+  const [destroySku, setDestroySku] = useState("");
+  const [destroyQty, setDestroyQty] = useState("");
+  const [destroyReason, setDestroyReason] = useState("Poor quality");
   const addDestruction = async () => {
     if (!sessionId) return;
     const sku = destroySku.trim();
@@ -533,7 +555,7 @@ export default function App() {
               </div>
 
               <div className="p-3">
-                {/* --- Scan mode + field --- */}
+                {/* --- Scan mode + field + clear --- */}
                 <div className="mb-2 flex flex-col sm:flex-row sm:items-end gap-2">
                   <div className="flex-1">
                     <label className="text-sm font-medium block mb-1">SKU / Scan Barcode</label>
@@ -543,7 +565,7 @@ export default function App() {
                       value={scanInput}
                       onChange={(e) => {
                         setScanInput(e.target.value);
-                        scheduleAutoSubmit(submitScan);
+                        scheduleAuto(submitScan);
                       }}
                       onKeyDown={(e) => {
                         if (e.key === "Enter") {
@@ -553,21 +575,43 @@ export default function App() {
                       }}
                       autoFocus
                     />
+                    {scanMode === "filter" && filterSku && (
+                      <div className="mt-2 inline-flex items-center gap-2 text-sm">
+                        <span className="px-2 py-1 rounded border bg-neutral-50">
+                          Filter: <span className="font-mono">{filterSku}</span>
+                        </span>
+                        <button className="px-2 py-1 border rounded" onClick={clearScans}>
+                          Clear
+                        </button>
+                      </div>
+                    )}
                   </div>
                   <div className="sm:w-56">
                     <label className="text-sm font-medium block mb-1">Scan Mode</label>
                     <select
                       className="w-full border rounded-lg px-3 py-2"
                       value={scanMode}
-                      onChange={(e) => setScanMode(e.target.value)}
+                      onChange={(e) => {
+                        setScanMode(e.target.value);
+                        // reset state switching modes
+                        setScanInput("");
+                        setFilterSku("");
+                        setScanLog([]);
+                      }}
                     >
                       <option value="count">Count (+1 on each scan)</option>
                       <option value="filter">Filter (show scanned only)</option>
                     </select>
                   </div>
+                  <div className="sm:w-auto">
+                    <label className="text-sm font-medium block mb-1"> </label>
+                    <button className="px-3 py-2 border rounded-lg w-full" onClick={clearScans}>
+                      Clear scans
+                    </button>
+                  </div>
                 </div>
 
-                {scanLog.length > 0 && (
+                {scanMode === "count" && scanLog.length > 0 && (
                   <div className="mb-4 border rounded-lg p-2 bg-neutral-50 max-h-44 overflow-auto text-sm">
                     <div className="font-medium mb-1">Recent scans</div>
                     <ul className="space-y-1">
@@ -583,7 +627,7 @@ export default function App() {
 
                 <div className="border rounded-2xl overflow-hidden">
                   <div className="grid grid-cols-12 bg-neutral-100 text-xs font-semibold px-3 py-2">
-                    <div className="col-span-3">SKU</div>
+                    <div className="col-span-3">SKU/Barcode</div>
                     <div className="col-span-5">Name</div>
                     <div className="col-span-1 text-right">System</div>
                     <div className="col-span-1 text-right">Committed</div>
@@ -625,7 +669,7 @@ export default function App() {
                     ))}
                     {!filtered.length && (
                       <div className="p-6 text-center text-sm text-neutral-500">
-                        No items to show for {city}. Seed CSV or pick a different session.
+                        No items to show for {city}. {scanMode === "filter" && filterSku ? "Clear the filter or scan a different SKU." : "Seed CSV or pick a different session."}
                       </div>
                     )}
                   </div>
@@ -664,38 +708,47 @@ export default function App() {
             </div>
 
             <div className="p-3 space-y-4">
-              {/* --- Scan field on destructions --- */}
-              <div>
-                <label className="text-sm font-medium block mb-1">SKU / Scan Barcode</label>
-                <input
-                  className="w-full border rounded-lg px-3 py-2"
-                  placeholder="Focus here, then scan"
-                  value={dScanInput}
-                  onChange={(e) => {
-                    setDScanInput(e.target.value);
-                    scheduleDAutoSubmit(submitDScan);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      if (dScanTimerRef.current) clearTimeout(dScanTimerRef.current);
-                      submitDScan();
-                    }
-                  }}
-                />
-                {dScanLog.length > 0 && (
-                  <div className="mt-2 border rounded-lg p-2 bg-neutral-50 max-h-40 overflow-auto text-sm">
-                    <div className="font-medium mb-1">Recent scans</div>
-                    <ul className="space-y-1">
-                      {dScanLog.map((s) => (
-                        <li key={s.ts} className="border-b last:border-none pb-1">
-                          <span className="font-mono">{s.sku}</span>{" "}
-                          <span className="text-neutral-600">— {s.name}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
+              {/* --- Destructions scan/search --- */}
+              <div className="flex flex-col sm:flex-row sm:items-end gap-2">
+                <div className="flex-1">
+                  <label className="text-sm font-medium block mb-1">SKU / Scan Barcode</label>
+                  <input
+                    className="w-full border rounded-lg px-3 py-2"
+                    placeholder="Focus here, then scan"
+                    value={dScanInput}
+                    onChange={(e) => {
+                      setDScanInput(e.target.value);
+                      scheduleDAuto(submitDScan);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        if (dScanTimerRef.current) clearTimeout(dScanTimerRef.current);
+                        submitDScan();
+                      }
+                    }}
+                  />
+                </div>
+                <div className="sm:w-auto">
+                  <label className="text-sm font-medium block mb-1"> </label>
+                  <button className="px-3 py-2 border rounded-lg w-full" onClick={clearDScans}>
+                    Clear scans
+                  </button>
+                </div>
               </div>
+
+              {dScanLog.length > 0 && (
+                <div className="border rounded-lg p-2 bg-neutral-50 max-h-40 overflow-auto text-sm">
+                  <div className="font-medium mb-1">Recent scans</div>
+                  <ul className="space-y-1">
+                    {dScanLog.map((s) => (
+                      <li key={s.ts} className="border-b last:border-none pb-1">
+                        <span className="font-mono">{s.sku}</span>{" "}
+                        <span className="text-neutral-600">— {s.name}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
                 <div className="sm:col-span-2">
@@ -735,7 +788,7 @@ export default function App() {
 
               <div className="border rounded-2xl overflow-hidden">
                 <div className="grid grid-cols-12 bg-neutral-100 text-xs font-semibold px-3 py-2">
-                  <div className="col-span-3">SKU</div>
+                  <div className="col-span-3">SKU/Barcode</div>
                   <div className="col-span-5">Name</div>
                   <div className="col-span-2 text-right">Destroyed</div>
                   <div className="col-span-2 text-right">Action</div>
