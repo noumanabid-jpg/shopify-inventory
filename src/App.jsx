@@ -488,7 +488,29 @@ export default function App() {
 
                 {/* TABLE: mobile-friendly grid; hide SKU/Barcode on mobile */}
                 <div className="border rounded-2xl overflow-hidden">
-                  <div className="grid grid-cols-9 sm:grid-cols-12 bg-neutral-100 text-xs font-semibold px-3 py-2">
+                  {/* TABLE: mobile-friendly grid; hide SKU/Barcode on mobile */}
+<div className="border rounded-2xl overflow-hidden">
+  {/* Header row — mobile short labels, desktop full labels */}
+  <div className="grid grid-cols-9 sm:grid-cols-12 bg-neutral-100 text-xs font-semibold px-3 py-2">
+    <div className="hidden sm:block sm:col-span-3">SKU/Barcode</div>
+
+    <div className="col-span-5 sm:col-span-5">Name</div>
+
+    <div className="col-span-1 text-right">
+      <span className="sm:hidden">Syst</span>
+      <span className="hidden sm:inline">System</span>
+    </div>
+
+    <div className="col-span-1 text-right">
+      <span className="sm:hidden">Comm</span>
+      <span className="hidden sm:inline">Committed</span>
+    </div>
+
+    <div className="col-span-2 text-right">
+      <span className="sm:hidden">Count</span>
+      <span className="hidden sm:inline">Counted</span>
+    </div>
+  </div>
                     <div className="hidden sm:block sm:col-span-3">SKU/Barcode</div>
                     <div className="col-span-5 sm:col-span-5">Name</div>
                     <div className="col-span-1 text-right">System</div>
