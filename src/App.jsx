@@ -14,11 +14,13 @@ import {
 
 /* ----------------- helpers ----------------- */
 const toNumber = (v) => {
-  const n = typeof v === "number" ? v : parseFloat(String(v ?? "").replace(/[,\s]/g, ""));
+  const n =
+    typeof v === "number" ? v : parseFloat(String(v ?? "").replace(/[,\s]/g, ""));
   return Number.isFinite(n) ? n : 0;
 };
 const csvFromRows = (rows) => Papa.unparse(rows);
-const blobFromText = (text, mime = "text/csv;charset=utf-8;") => new Blob([text], { type: mime });
+const blobFromText = (text, mime = "text/csv;charset=utf-8;") =>
+  new Blob([text], { type: mime });
 const downloadTextAs = (text, filename) => {
   const blob = blobFromText(text);
   const url = URL.createObjectURL(blob);
@@ -68,14 +70,48 @@ export default function App() {
   const [rows, setRows] = useState([]);
   const [destructions, setDestructions] = useState([]);
 
-  /* destr form */
-  const [destroySku, setDestroySku] = useState("");
-  const [destroyQty, setDestroyQty] = useState("");
-  const [destroyReason, setDestroyReason] = useState("Poor quality");
+  /* ----------- Scan field (auto-submit) ----------- */
+  const [scanInput, setScanInput] = useState("");
+  const [scanLog, setScanLog] = useState([]); // [{sku, name, ts}]
+  const scanTimerRef = useRef(null);
 
-  /* upload */
-  const fileInputRef = useRef(null);
-  const triggerFileDialog = () => fileInputRef.current?.click();
+  // Auto-submit after brief pause in typing (works with scanners that don't send Enter)
+  const scheduleAutoSubmit = () => {
+    if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
+    scanTimerRef.current = setTimeout(() => submitScan(), 180); // ~instant, but allows scanner to finish
+  };
+
+  const submitScan = async () => {
+    const val = (scanInput || "").trim();
+    if (!val || !sessionId) return;
+
+    // find the row in the current city
+    const row = rows.find((r) => r.city === city && r.sku === val);
+    // log entry (even if not found, we show what was scanned)
+    setScanLog((prev) => [
+      { sku: val, name: row?.name || "(not found)", ts: Date.now() },
+      ...prev,
+    ]);
+    setScanInput(""); // clear field for next scan
+
+    if (!row) return; // no counting update if not in the list for that city
+
+    // optimistic +1 to counted
+    const next = (row.counted_qty ?? 0) + 1;
+    setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, counted_qty: next } : r)));
+
+    // persist
+    try {
+      await api("counts", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId, id: row.id, counted_qty: next }),
+      });
+    } catch (e) {
+      // if it fails silently, leave optimistic UI; user can refresh session
+      console.error(e);
+    }
+  };
 
   /* load sessions */
   useEffect(() => {
@@ -112,6 +148,8 @@ export default function App() {
   };
 
   /* csv upload/parse */
+  const fileInputRef = useRef(null);
+  const triggerFileDialog = () => fileInputRef.current?.click();
   const onFileSelected = (file) => {
     if (!file) return;
     setBusy(true);
@@ -185,7 +223,7 @@ export default function App() {
     }
   };
 
-  /* city-filtered view */
+  /* city-filtered view for table */
   const filtered = useMemo(
     () => rows.filter((r) => r.city === city),
     [rows, city]
@@ -210,6 +248,9 @@ export default function App() {
   }, [filtered]);
 
   /* destructions */
+  const [destroySku, setDestroySku] = useState("");
+  const [destroyQty, setDestroyQty] = useState("");
+  const [destroyReason, setDestroyReason] = useState("Poor quality");
   const addDestruction = async () => {
     if (!sessionId) return;
     const sku = destroySku.trim();
@@ -409,7 +450,9 @@ export default function App() {
                           <select
                             className="mt-1 w-full border rounded-lg px-3 py-2"
                             value={mapping[f]}
-                            onChange={(e) => setMapping((p) => ({ ...p, [f]: e.target.value }))}
+                            onChange={(e) =>
+                              setMapping((p) => ({ ...p, [f]: e.target.value }))
+                            }
                           >
                             <option value="">Select CSV column</option>
                             {csvHeaders.map((h) => (
@@ -465,6 +508,41 @@ export default function App() {
               </div>
 
               <div className="p-3">
+                {/* --- Scan field (auto submit) --- */}
+                <div className="mb-4">
+                  <label className="text-sm font-medium block mb-1">SKU / Scan Barcode</label>
+                  <input
+                    className="w-full border rounded-lg px-3 py-2"
+                    placeholder="Focus here, then scan"
+                    value={scanInput}
+                    onChange={(e) => {
+                      setScanInput(e.target.value);
+                      scheduleAutoSubmit(); // auto submit on every scan
+                    }}
+                    onKeyDown={(e) => {
+                      // If the scanner sends Enter, submit immediately
+                      if (e.key === "Enter") {
+                        if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
+                        submitScan();
+                      }
+                    }}
+                    autoFocus
+                  />
+                  {scanLog.length > 0 && (
+                    <div className="mt-2 border rounded-lg p-2 bg-neutral-50 max-h-44 overflow-auto text-sm">
+                      <div className="font-medium mb-1">Recent scans</div>
+                      <ul className="space-y-1">
+                        {scanLog.map((s) => (
+                          <li key={s.ts} className="border-b last:border-none pb-1">
+                            <span className="font-mono">{s.sku}</span>{" "}
+                            <span className="text-neutral-600">— {s.name}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+
                 <div className="border rounded-2xl overflow-hidden">
                   <div className="grid grid-cols-12 bg-neutral-100 text-xs font-semibold px-3 py-2">
                     <div className="col-span-3">SKU</div>
@@ -530,10 +608,7 @@ export default function App() {
                       Δ {totals.diff > 0 ? `+${totals.diff}` : totals.diff}
                     </span>
                   </div>
-                  <button
-                    className="px-3 py-2 rounded-lg bg-black text-white"
-                    onClick={exportReport}
-                  >
+                  <button className="px-3 py-2 rounded-lg bg-black text-white" onClick={exportReport}>
                     <Download className="w-4 h-4 inline-block mr-1" />
                     Export Main CSV
                   </button>
