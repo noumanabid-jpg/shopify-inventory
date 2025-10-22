@@ -282,7 +282,6 @@ export default function App() {
   const addDestruction = async () => {
     if (!sessionId) return;
     const sku = destroySku.trim();
-    the:
     const qty = toNumber(destroyQty);
     const row = rows.find((r) => r.sku === sku && r.city === city);
     if (!row || !sku || qty <= 0) return;
