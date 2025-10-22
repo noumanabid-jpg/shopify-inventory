@@ -75,6 +75,11 @@ export default function App() {
   const [scanInput, setScanInput] = useState("");
   const [scanLog, setScanLog] = useState([]); // used only in 'count' mode
   const [filterSku, setFilterSku] = useState(""); // active filter in 'filter' mode
+
+  // NEW: show-only-scanned behavior
+  const [showOnlyScanned, setShowOnlyScanned] = useState(true);
+  const [lastScannedSku, setLastScannedSku] = useState("");
+
   const scanTimerRef = useRef(null);
 
   const submitScan = async (valRaw) => {
@@ -95,7 +100,12 @@ export default function App() {
       ...prev,
     ]);
 
-    if (!row) return;
+    // remember last scanned SKU & optionally show only that row
+    setLastScannedSku(val);
+    if (showOnlyScanned) setFilterSku(val);
+
+    if (!row) return; // unknown SKU: nothing to increment
+
     const next = (row.counted_qty ?? 0) + 1;
 
     // optimistic UI
@@ -120,6 +130,7 @@ export default function App() {
   const clearScans = () => {
     if (scanMode === "count") setScanLog([]);
     setFilterSku("");
+    setLastScannedSku("");
     setScanInput("");
   };
 
@@ -240,12 +251,16 @@ export default function App() {
 
   /* ------------ FILTERING (with dedupe & instant update) ------------ */
   const filtered = useMemo(() => {
-    // Base city filter
     let base = rows.filter((r) => r.city === city);
 
-    // Filter-on-scan: exact SKU match for stability
+    // Filter mode: exact SKU match
     if (scanMode === "filter" && filterSku) {
       base = base.filter((r) => r.sku === filterSku);
+    }
+
+    // Count mode + showOnlyScanned: show only last scanned
+    if (scanMode === "count" && showOnlyScanned && lastScannedSku) {
+      base = base.filter((r) => r.sku === lastScannedSku);
     }
 
     // Dedupe by SKU to avoid accidental duplicates
@@ -258,7 +273,7 @@ export default function App() {
     });
 
     return base;
-  }, [rows, city, scanMode, filterSku]);
+  }, [rows, city, scanMode, filterSku, showOnlyScanned, lastScannedSku]);
 
   /* totals */
   const totals = useMemo(() => {
@@ -550,7 +565,7 @@ export default function App() {
               </div>
 
               <div className="p-3">
-                {/* Scan mode + field + clear */}
+                {/* Scan mode + field + clear + show-only-scanned */}
                 <div className="mb-2 flex flex-col sm:flex-row sm:items-end gap-2">
                   <div className="flex-1">
                     <label className="text-sm font-medium block mb-1">SKU / Scan Barcode</label>
@@ -561,7 +576,7 @@ export default function App() {
                       onChange={(e) => {
                         const v = e.target.value;
                         setScanInput(v);
-                        scheduleAuto(v); // instant submit (filter or count)
+                        scheduleAuto(v);
                       }}
                       onKeyDown={(e) => {
                         if (e.key === "Enter") {
@@ -582,6 +597,7 @@ export default function App() {
                       </div>
                     )}
                   </div>
+
                   <div className="sm:w-56">
                     <label className="text-sm font-medium block mb-1">Scan Mode</label>
                     <select
@@ -591,6 +607,7 @@ export default function App() {
                         setScanMode(e.target.value);
                         setScanInput("");
                         setFilterSku("");
+                        setLastScannedSku("");
                         setScanLog([]);
                       }}
                     >
@@ -598,6 +615,25 @@ export default function App() {
                       <option value="filter">Filter (show scanned only)</option>
                     </select>
                   </div>
+
+                  <div className="sm:w-auto">
+                    <label className="text-sm font-medium block mb-1"> </label>
+                    <label className="inline-flex items-center gap-2 text-sm border rounded-lg px-3 py-2">
+                      <input
+                        type="checkbox"
+                        checked={showOnlyScanned}
+                        onChange={(e) => {
+                          setShowOnlyScanned(e.target.checked);
+                          if (!e.target.checked) {
+                            setLastScannedSku("");
+                            if (scanMode !== "filter") setFilterSku("");
+                          }
+                        }}
+                      />
+                      Show only scanned row
+                    </label>
+                  </div>
+
                   <div className="sm:w-auto">
                     <label className="text-sm font-medium block mb-1"> </label>
                     <button className="px-3 py-2 border rounded-lg w-full" onClick={clearScans}>
