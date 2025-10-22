@@ -40,14 +40,20 @@ const api = async (path, opts = {}) => {
   return r.json();
 };
 
+/* ----------------- component ----------------- */
 export default function App() {
+  /* tabs: 'count' | 'destructions' */
   const [page, setPage] = useState("count");
+
+  /* sessions + selection */
   const [sessions, setSessions] = useState([]);
   const [sessionId, setSessionId] = useState("");
   const [newSessionName, setNewSessionName] = useState("");
 
-  const [city, setCity] = useState("Jeddah");
+  /* fixed city dropdown */
+  const [city, setCity] = useState("Jeddah"); // Jeddah | Riyadh | Dammam
 
+  /* mapping + csv */
   const [csvHeaders, setCsvHeaders] = useState([]);
   const [mapping, setMapping] = useState({
     city: "",
@@ -60,6 +66,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [fileInfo, setFileInfo] = useState("");
 
+  /* rows + destructions */
   const [rows, setRows] = useState([]);
   const [destructions, setDestructions] = useState([]);
 
@@ -70,7 +77,6 @@ export default function App() {
   const [filterSku, setFilterSku] = useState(""); // active filter in 'filter' mode
   const scanTimerRef = useRef(null);
 
-  // NEW: submitScan now accepts the value so we avoid stale state
   const submitScan = async (valRaw) => {
     const val = (valRaw ?? scanInput).trim();
     if (!val || !sessionId) return;
@@ -79,8 +85,7 @@ export default function App() {
     setScanInput("");
 
     if (scanMode === "filter") {
-      // exact match filter for stability + no duplicates
-      setFilterSku(val);
+      setFilterSku(val); // exact-match filter
       return;
     }
 
@@ -118,10 +123,11 @@ export default function App() {
     setScanInput("");
   };
 
-  /* ----------- Destructions scan ----------- */
+  /* ----------- Destructions: Scan field ----------- */
   const [dScanInput, setDScanInput] = useState("");
-  const [dScanLog, setDScanLog] = useState([]);
+  const [dScanLog, setDScanLog] = useState([]); // [{sku, name, ts}]
   const dScanTimerRef = useRef(null);
+
   const [destroySku, setDestroySku] = useState("");
   const [destroyQty, setDestroyQty] = useState("");
   const [destroyReason, setDestroyReason] = useState("Poor quality");
@@ -132,7 +138,7 @@ export default function App() {
     const row = rows.find((r) => r.city === city && r.sku === val);
     setDScanLog((prev) => [{ sku: val, name: row?.name || "(not found)", ts: Date.now() }, ...prev]);
     setDScanInput("");
-    if (row) setDestroySku(row.sku);
+    if (row) setDestroySku(row.sku); // prefill
   };
   const scheduleDAuto = (nextVal) => {
     if (dScanTimerRef.current) clearTimeout(dScanTimerRef.current);
@@ -144,6 +150,7 @@ export default function App() {
     setDestroySku("");
   };
 
+  /* load sessions */
   useEffect(() => {
     (async () => {
       const list = await api("sessions");
@@ -151,6 +158,7 @@ export default function App() {
     })().catch(console.error);
   }, []);
 
+  /* load mapping/rows/destructions for selected session */
   useEffect(() => {
     if (!sessionId) return;
     (async () => {
@@ -163,6 +171,7 @@ export default function App() {
     })().catch(console.error);
   }, [sessionId]);
 
+  /* csv upload/parse */
   const fileInputRef = useRef(null);
   const triggerFileDialog = () => fileInputRef.current?.click();
   const onFileSelected = (file) => {
@@ -182,6 +191,7 @@ export default function App() {
     });
   };
 
+  /* seed session from CSV to cloud */
   const canSeed =
     !!sessionId &&
     !!rawRows.length &&
@@ -196,12 +206,14 @@ export default function App() {
       return;
     }
     try {
+      // save mapping
       await api("mapping", {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ sessionId, mapping }),
       });
 
+      // normalize and send to backend
       const norm = rawRows.map((r) => ({
         city: String(r[mapping.city] ?? "").trim(),
         sku: String(r[mapping.sku] ?? "").trim(),
@@ -216,6 +228,7 @@ export default function App() {
         body: JSON.stringify({ sessionId, rows: norm }),
       });
 
+      // refresh
       const c = await api(`counts?sessionId=${sessionId}`);
       setRows(c);
       alert("Session seeded!");
@@ -247,6 +260,7 @@ export default function App() {
     return base;
   }, [rows, city, scanMode, filterSku]);
 
+  /* totals */
   const totals = useMemo(() => {
     let sys = 0,
       cnt = 0,
@@ -264,9 +278,11 @@ export default function App() {
     return { sys, cnt, committed, diff, lines };
   }, [filtered]);
 
+  /* destructions CRUD */
   const addDestruction = async () => {
     if (!sessionId) return;
     const sku = destroySku.trim();
+    the:
     const qty = toNumber(destroyQty);
     const row = rows.find((r) => r.sku === sku && r.city === city);
     if (!row || !sku || qty <= 0) return;
@@ -343,7 +359,7 @@ export default function App() {
       </div>
 
       <main className="max-w-7xl mx-auto px-3 py-4 space-y-6">
-        {/* Session + City (unchanged UI from previous reply) */}
+        {/* Session + City */}
         <section className="bg-white border rounded-2xl shadow-sm">
           <div className="px-3 py-3 border-b flex items-center gap-2">
             <ClipboardList className="w-4 h-4" />
@@ -366,6 +382,7 @@ export default function App() {
               </select>
             </div>
 
+            {/* Fixed city dropdown */}
             <div>
               <label className="text-sm">City / Branch</label>
               <select
@@ -386,28 +403,146 @@ export default function App() {
                 onChange={(e) => setNewSessionName(e.target.value)}
                 placeholder="New session name"
               />
-              <button className="px-3 py-2 rounded-lg bg-black text-white" onClick={() => {
-                if (!newSessionName.trim()) return;
-                api("sessions", {
-                  method: "POST",
-                  headers: { "content-type": "application/json" },
-                  body: JSON.stringify({ name: newSessionName.trim(), city }),
-                }).then((s) => {
-                  setSessions((prev) => [s, ...prev]);
-                  setSessionId(s.id);
-                  setNewSessionName("");
-                }).catch(console.error);
-              }}>
+              <button
+                className="px-3 py-2 rounded-lg bg-black text-white"
+                onClick={() => {
+                  if (!newSessionName.trim()) return;
+                  api("sessions", {
+                    method: "POST",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({ name: newSessionName.trim(), city }),
+                  })
+                    .then((s) => {
+                      setSessions((prev) => [s, ...prev]);
+                      setSessionId(s.id);
+                      setNewSessionName("");
+                    })
+                    .catch(console.error);
+                }}
+              >
                 Create
               </button>
             </div>
           </div>
         </section>
 
-        {/* COUNTING PAGE */}
+        {/* COUNTING PAGE ONLY */}
         {page === "count" && !!sessionId && (
           <>
-            {/* Upload + mapping section ... (keep from previous file) */}
+            {/* Upload + mapping */}
+            <section className="bg-white border rounded-2xl shadow-sm">
+              <div className="px-3 py-3 border-b flex items-center gap-2">
+                <Upload className="w-4 h-4" />
+                <h2 className="font-semibold text-sm sm:text-base">
+                  Upload Shopify CSV → Seed Session
+                </h2>
+              </div>
+              <div className="p-3 space-y-3">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="text/csv,.csv"
+                    className="hidden"
+                    onChange={(e) => e.target.files?.[0] && onFileSelected(e.target.files[0])}
+                  />
+                  <button className="px-4 py-2 rounded-lg bg-black text-white" onClick={triggerFileDialog}>
+                    <span className="inline-flex items-center gap-2">
+                      <Upload className="w-4 h-4" />
+                      Choose CSV
+                    </span>
+                  </button>
+                  {busy && (
+                    <span className="inline-flex items-center gap-2 px-2 py-1 border rounded-lg text-sm">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Parsing…
+                    </span>
+                  )}
+                  {!busy && !!rawRows.length && (
+                    <span className="px-2 py-1 border rounded-lg text-sm">Rows: {rawRows.length}</span>
+                  )}
+                  {fileInfo && (
+                    <span className="px-2 py-1 border rounded-lg text-sm bg-neutral-50">{fileInfo}</span>
+                  )}
+                  <button
+                    className="px-2 py-1 border rounded-lg text-sm"
+                    onClick={() => {
+                      setCsvHeaders([]);
+                      setRawRows([]);
+                      setFileInfo("");
+                    }}
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      <RefreshCw className="w-4 h-4" />
+                      Reset
+                    </span>
+                  </button>
+                </div>
+
+                {!!csvHeaders.length && (
+                  <>
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                      {["city", "sku", "name", "systemQty"].map((f) => (
+                        <div key={f}>
+                          <label className="text-sm">
+                            {
+                              {
+                                city: "City / Branch",
+                                sku: "SKU or Barcode",
+                                name: "Product / Variant Name",
+                                systemQty: "System Quantity",
+                              }[f]
+                            }
+                          </label>
+                          <select
+                            className="mt-1 w-full border rounded-lg px-3 py-2"
+                            value={mapping[f]}
+                            onChange={(e) => setMapping((p) => ({ ...p, [f]: e.target.value }))}
+                          >
+                            <option value="">Select CSV column</option>
+                            {csvHeaders.map((h) => (
+                              <option key={h} value={h}>
+                                {h}
+                              </option>
+                            ))}
+                          </select>
+                          <p className="text-xs text-neutral-500 mt-1">Map to your CSV headers</p>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                      <div>
+                        <label className="text-sm">Committed Quantity (optional)</label>
+                        <select
+                          className="mt-1 w-full border rounded-lg px-3 py-2"
+                          value={mapping.committedQty}
+                          onChange={(e) => setMapping((p) => ({ ...p, committedQty: e.target.value }))}
+                        >
+                          <option value="">(None)</option>
+                          {csvHeaders.map((h) => (
+                            <option key={h} value={h}>
+                              {h}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div>
+                      <button
+                        className="w-full sm:w-auto px-4 py-2 rounded-lg bg-emerald-600 text-white disabled:opacity-50"
+                        disabled={!canSeed}
+                        onClick={seedSessionFromCsv}
+                      >
+                        Seed Session from CSV (Cloud)
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </section>
+
             {/* Counting workspace */}
             <section className="bg-white border rounded-2xl shadow-sm">
               <div className="px-3 py-3 border-b flex items-center gap-2">
@@ -416,7 +551,7 @@ export default function App() {
               </div>
 
               <div className="p-3">
-                {/* Scan controls */}
+                {/* Scan mode + field + clear */}
                 <div className="mb-2 flex flex-col sm:flex-row sm:items-end gap-2">
                   <div className="flex-1">
                     <label className="text-sm font-medium block mb-1">SKU / Scan Barcode</label>
@@ -427,7 +562,7 @@ export default function App() {
                       onChange={(e) => {
                         const v = e.target.value;
                         setScanInput(v);
-                        scheduleAuto(v); // instant filter/count using current value
+                        scheduleAuto(v); // instant submit (filter or count)
                       }}
                       onKeyDown={(e) => {
                         if (e.key === "Enter") {
@@ -488,38 +623,35 @@ export default function App() {
 
                 {/* TABLE: mobile-friendly grid; hide SKU/Barcode on mobile */}
                 <div className="border rounded-2xl overflow-hidden">
-                  {/* TABLE: mobile-friendly grid; hide SKU/Barcode on mobile */}
-<div className="border rounded-2xl overflow-hidden">
-  {/* Header row — mobile short labels, desktop full labels */}
-  <div className="grid grid-cols-9 sm:grid-cols-12 bg-neutral-100 text-xs font-semibold px-3 py-2">
-    <div className="hidden sm:block sm:col-span-3">SKU/Barcode</div>
-
-    <div className="col-span-5 sm:col-span-5">Name</div>
-
-    <div className="col-span-1 text-right">
-      <span className="sm:hidden">Syst</span>
-      <span className="hidden sm:inline">System</span>
-    </div>
-
-    <div className="col-span-1 text-right">
-      <span className="sm:hidden">Comm</span>
-      <span className="hidden sm:inline">Committed</span>
-    </div>
-
-    <div className="col-span-2 text-right">
-      <span className="sm:hidden">Count</span>
-      <span className="hidden sm:inline">Counted</span>
-    </div>
-  </div>
+                  {/* Header row — mobile short labels, desktop full labels */}
+                  <div className="grid grid-cols-9 sm:grid-cols-12 bg-neutral-100 text-xs font-semibold px-3 py-2">
                     <div className="hidden sm:block sm:col-span-3">SKU/Barcode</div>
+
                     <div className="col-span-5 sm:col-span-5">Name</div>
-                    <div className="col-span-1 text-right">System</div>
-                    <div className="col-span-1 text-right">Committed</div>
-                    <div className="col-span-2 text-right">Counted</div>
+
+                    <div className="col-span-1 text-right">
+                      <span className="sm:hidden">Syst</span>
+                      <span className="hidden sm:inline">System</span>
+                    </div>
+
+                    <div className="col-span-1 text-right">
+                      <span className="sm:hidden">Comm</span>
+                      <span className="hidden sm:inline">Committed</span>
+                    </div>
+
+                    <div className="col-span-2 text-right">
+                      <span className="sm:hidden">Count</span>
+                      <span className="hidden sm:inline">Counted</span>
+                    </div>
                   </div>
+
+                  {/* Body */}
                   <div className="max-h-[480px] overflow-auto divide-y">
                     {filtered.map((r) => (
-                      <div key={`${r.id || r.sku}`} className="grid grid-cols-9 sm:grid-cols-12 items-center px-3 py-2 text-sm">
+                      <div
+                        key={`${r.id || r.sku}`}
+                        className="grid grid-cols-9 sm:grid-cols-12 items-center px-3 py-2 text-sm"
+                      >
                         <div className="hidden sm:block sm:col-span-3 font-mono truncate" title={r.sku}>
                           {r.sku}
                         </div>
@@ -560,12 +692,14 @@ export default function App() {
                       </div>
                     )}
                   </div>
+
+                  {/* Footer note */}
                   <div className="px-3 py-2 text-[11px] text-neutral-500 border-t">
                     *Diff is exported in CSV (Counted − System). Live view shows System/Committed/Counted.
                   </div>
                 </div>
 
-                {/* Totals + export (unchanged) */}
+                {/* Totals + export */}
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                   <div className="flex flex-wrap items-center gap-2 text-sm">
                     <span className="px-2 py-1 border rounded-lg">Lines {totals.lines}</span>
@@ -586,7 +720,7 @@ export default function App() {
           </>
         )}
 
-        {/* DESTRUCTIONS PAGE (kept same mobile tweak for columns if you want later) */}
+        {/* DESTRUCTIONS PAGE ONLY */}
         {page === "destructions" && !!sessionId && (
           <section className="bg-white border rounded-2xl shadow-sm">
             <div className="px-3 py-3 border-b flex items-center gap-2">
@@ -595,7 +729,7 @@ export default function App() {
             </div>
 
             <div className="p-3 space-y-4">
-              {/* Scan/search on destructions */}
+              {/* Destructions scan/search */}
               <div className="flex flex-col sm:flex-row sm:items-end gap-2">
                 <div className="flex-1">
                   <label className="text-sm font-medium block mb-1">SKU / Scan Barcode</label>
@@ -623,20 +757,6 @@ export default function App() {
                   </button>
                 </div>
               </div>
-
-              {dScanLog.length > 0 && (
-                <div className="border rounded-lg p-2 bg-neutral-50 max-h-40 overflow-auto text-sm">
-                  <div className="font-medium mb-1">Recent scans</div>
-                  <ul className="space-y-1">
-                    {dScanLog.map((s) => (
-                      <li key={s.ts} className="border-b last:border-none pb-1">
-                        <span className="font-mono">{s.sku}</span>{" "}
-                        <span className="text-neutral-600">— {s.name}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
                 <div className="sm:col-span-2">
