@@ -1,7 +1,8 @@
-// netlify/functions/admin-wipe.mjs
-import { listStores, getStore } from '@netlify/blobs';
+// netlify/functions/admin-wipe.js
+exports.handler = async (event) => {
+  // Dynamic import so CJS can use an ESM package
+  const { listStores, getStore } = await import('@netlify/blobs');
 
-export const handler = async (event) => {
   const key = event.queryStringParameters?.key || '';
   const confirm = event.queryStringParameters?.confirm || '';
 
@@ -16,6 +17,7 @@ export const handler = async (event) => {
     };
   }
 
+  // Manual Blobs context (fixes MissingBlobsEnvironmentError)
   const siteID = process.env.NETLIFY_SITE_ID;
   const token = process.env.NETLIFY_API_TOKEN;
   if (!siteID || !token) {
@@ -29,7 +31,7 @@ export const handler = async (event) => {
   const allStores = await listStores({ siteID, token });
   const summary = {};
 
-  for (const s of allStores.stores) {
+  for (const s of allStores.stores || []) {
     const name = s.name;
     const store = getStore({ name, siteID, token });
     const { blobs } = await store.list();
