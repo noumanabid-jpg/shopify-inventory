@@ -40,20 +40,14 @@ const api = async (path, opts = {}) => {
   return r.json();
 };
 
-/* ----------------- component ----------------- */
 export default function App() {
-  /* tabs: 'count' | 'destructions' */
   const [page, setPage] = useState("count");
-
-  /* sessions + selection */
   const [sessions, setSessions] = useState([]);
   const [sessionId, setSessionId] = useState("");
   const [newSessionName, setNewSessionName] = useState("");
 
-  /* fixed city dropdown */
-  const [city, setCity] = useState("Jeddah"); // Jeddah | Riyadh | Dammam
+  const [city, setCity] = useState("Jeddah");
 
-  /* mapping + csv */
   const [csvHeaders, setCsvHeaders] = useState([]);
   const [mapping, setMapping] = useState({
     city: "",
@@ -66,41 +60,26 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [fileInfo, setFileInfo] = useState("");
 
-  /* rows + destructions */
   const [rows, setRows] = useState([]);
   const [destructions, setDestructions] = useState([]);
 
   /* ----------- Counting: Scan field + mode ----------- */
   const [scanMode, setScanMode] = useState("count"); // 'count' | 'filter'
   const [scanInput, setScanInput] = useState("");
-  const [scanLog, setScanLog] = useState([]); // [{sku, name, ts}]  (used only in 'count' mode)
+  const [scanLog, setScanLog] = useState([]); // used only in 'count' mode
   const [filterSku, setFilterSku] = useState(""); // active filter in 'filter' mode
   const scanTimerRef = useRef(null);
 
-  const scheduleAuto = (fn) => {
-    if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
-    scanTimerRef.current = setTimeout(fn, 180);
-  };
-
-  const clearScans = () => {
-    if (scanMode === "count") {
-      setScanLog([]);
-    } else {
-      setFilterSku("");
-    }
-    setScanInput("");
-  };
-
-  const submitScan = async () => {
-    const val = (scanInput || "").trim();
+  // NEW: submitScan now accepts the value so we avoid stale state
+  const submitScan = async (valRaw) => {
+    const val = (valRaw ?? scanInput).trim();
     if (!val || !sessionId) return;
 
-    // Locate SKU in current city
     const row = rows.find((r) => r.city === city && r.sku === val);
     setScanInput("");
 
     if (scanMode === "filter") {
-      // No history; just set active filter
+      // exact match filter for stability + no duplicates
       setFilterSku(val);
       return;
     }
@@ -128,32 +107,43 @@ export default function App() {
     }
   };
 
-  /* ----------- Destructions: Scan field ----------- */
-  const [dScanInput, setDScanInput] = useState("");
-  const [dScanLog, setDScanLog] = useState([]); // [{sku, name, ts}]
-  const dScanTimerRef = useRef(null);
-
-  const scheduleDAuto = (fn) => {
-    if (dScanTimerRef.current) clearTimeout(dScanTimerRef.current);
-    dScanTimerRef.current = setTimeout(fn, 180);
+  const scheduleAuto = (nextVal) => {
+    if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
+    scanTimerRef.current = setTimeout(() => submitScan(nextVal), 120);
   };
 
+  const clearScans = () => {
+    if (scanMode === "count") setScanLog([]);
+    setFilterSku("");
+    setScanInput("");
+  };
+
+  /* ----------- Destructions scan ----------- */
+  const [dScanInput, setDScanInput] = useState("");
+  const [dScanLog, setDScanLog] = useState([]);
+  const dScanTimerRef = useRef(null);
+  const [destroySku, setDestroySku] = useState("");
+  const [destroyQty, setDestroyQty] = useState("");
+  const [destroyReason, setDestroyReason] = useState("Poor quality");
+
+  const submitDScan = (valRaw) => {
+    const val = (valRaw ?? dScanInput).trim();
+    if (!val || !sessionId) return;
+    const row = rows.find((r) => r.city === city && r.sku === val);
+    setDScanLog((prev) => [{ sku: val, name: row?.name || "(not found)", ts: Date.now() }, ...prev]);
+    setDScanInput("");
+    if (row) setDestroySku(row.sku);
+  };
+  const scheduleDAuto = (nextVal) => {
+    if (dScanTimerRef.current) clearTimeout(dScanTimerRef.current);
+    dScanTimerRef.current = setTimeout(() => submitDScan(nextVal), 120);
+  };
   const clearDScans = () => {
     setDScanLog([]);
     setDScanInput("");
     setDestroySku("");
   };
 
-  const submitDScan = () => {
-    const val = (dScanInput || "").trim();
-    if (!val || !sessionId) return;
-    const row = rows.find((r) => r.city === city && r.sku === val);
-    setDScanLog((prev) => [{ sku: val, name: row?.name || "(not found)", ts: Date.now() }, ...prev]);
-    setDScanInput("");
-    if (row) setDestroySku(row.sku); // prefill
-  };
-
-  /* load sessions */
   useEffect(() => {
     (async () => {
       const list = await api("sessions");
@@ -161,7 +151,6 @@ export default function App() {
     })().catch(console.error);
   }, []);
 
-  /* load mapping/rows/destructions for selected session */
   useEffect(() => {
     if (!sessionId) return;
     (async () => {
@@ -174,20 +163,6 @@ export default function App() {
     })().catch(console.error);
   }, [sessionId]);
 
-  /* create new session */
-  const createSession = async () => {
-    if (!newSessionName.trim()) return;
-    const s = await api("sessions", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: newSessionName.trim(), city }),
-    });
-    setSessions((prev) => [s, ...prev]);
-    setSessionId(s.id);
-    setNewSessionName("");
-  };
-
-  /* csv upload/parse */
   const fileInputRef = useRef(null);
   const triggerFileDialog = () => fileInputRef.current?.click();
   const onFileSelected = (file) => {
@@ -206,17 +181,7 @@ export default function App() {
       error: () => setBusy(false),
     });
   };
-  const prevent = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-  };
-  const handleDrop = (e) => {
-    prevent(e);
-    const f = e.dataTransfer.files?.[0];
-    if (f) onFileSelected(f);
-  };
 
-  /* seed session from CSV to cloud */
   const canSeed =
     !!sessionId &&
     !!rawRows.length &&
@@ -231,14 +196,12 @@ export default function App() {
       return;
     }
     try {
-      // save mapping
       await api("mapping", {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ sessionId, mapping }),
       });
 
-      // normalize and send to backend
       const norm = rawRows.map((r) => ({
         city: String(r[mapping.city] ?? "").trim(),
         sku: String(r[mapping.sku] ?? "").trim(),
@@ -253,7 +216,6 @@ export default function App() {
         body: JSON.stringify({ sessionId, rows: norm }),
       });
 
-      // refresh
       const c = await api(`counts?sessionId=${sessionId}`);
       setRows(c);
       alert("Session seeded!");
@@ -263,20 +225,28 @@ export default function App() {
     }
   };
 
-  /* city-filtered view + filter on scan */
+  /* ------------ FILTERING (with dedupe & instant update) ------------ */
   const filtered = useMemo(() => {
+    // Base city filter
     let base = rows.filter((r) => r.city === city);
+
+    // Filter-on-scan: exact SKU match for stability
     if (scanMode === "filter" && filterSku) {
-      // exact match preferred; fallback to contains on SKU/Name for manual typing
-      const q = filterSku.toLowerCase();
-      base = base.filter(
-        (r) => r.sku === filterSku || r.sku.toLowerCase().includes(q) || r.name.toLowerCase().includes(q)
-      );
+      base = base.filter((r) => r.sku === filterSku);
     }
+
+    // Dedupe by SKU to avoid accidental duplicates
+    const seen = new Set();
+    base = base.filter((r) => {
+      const key = r.sku || r.id;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
     return base;
   }, [rows, city, scanMode, filterSku]);
 
-  /* totals */
   const totals = useMemo(() => {
     let sys = 0,
       cnt = 0,
@@ -294,10 +264,6 @@ export default function App() {
     return { sys, cnt, committed, diff, lines };
   }, [filtered]);
 
-  /* destructions CRUD */
-  const [destroySku, setDestroySku] = useState("");
-  const [destroyQty, setDestroyQty] = useState("");
-  const [destroyReason, setDestroyReason] = useState("Poor quality");
   const addDestruction = async () => {
     if (!sessionId) return;
     const sku = destroySku.trim();
@@ -377,7 +343,7 @@ export default function App() {
       </div>
 
       <main className="max-w-7xl mx-auto px-3 py-4 space-y-6">
-        {/* Session + City */}
+        {/* Session + City (unchanged UI from previous reply) */}
         <section className="bg-white border rounded-2xl shadow-sm">
           <div className="px-3 py-3 border-b flex items-center gap-2">
             <ClipboardList className="w-4 h-4" />
@@ -400,7 +366,6 @@ export default function App() {
               </select>
             </div>
 
-            {/* Fixed city dropdown */}
             <div>
               <label className="text-sm">City / Branch</label>
               <select
@@ -421,132 +386,28 @@ export default function App() {
                 onChange={(e) => setNewSessionName(e.target.value)}
                 placeholder="New session name"
               />
-              <button className="px-3 py-2 rounded-lg bg-black text-white" onClick={createSession}>
+              <button className="px-3 py-2 rounded-lg bg-black text-white" onClick={() => {
+                if (!newSessionName.trim()) return;
+                api("sessions", {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({ name: newSessionName.trim(), city }),
+                }).then((s) => {
+                  setSessions((prev) => [s, ...prev]);
+                  setSessionId(s.id);
+                  setNewSessionName("");
+                }).catch(console.error);
+              }}>
                 Create
               </button>
             </div>
           </div>
         </section>
 
-        {/* COUNTING PAGE ONLY */}
+        {/* COUNTING PAGE */}
         {page === "count" && !!sessionId && (
           <>
-            {/* Upload + mapping */}
-            <section className="bg-white border rounded-2xl shadow-sm">
-              <div className="px-3 py-3 border-b flex items-center gap-2">
-                <Upload className="w-4 h-4" />
-                <h2 className="font-semibold text-sm sm:text-base">Upload Shopify CSV → Seed Session</h2>
-              </div>
-              <div className="p-3 space-y-3">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="text/csv,.csv"
-                    className="hidden"
-                    onChange={(e) => e.target.files?.[0] && onFileSelected(e.target.files[0])}
-                  />
-                  <button className="px-4 py-2 rounded-lg bg-black text-white" onClick={triggerFileDialog}>
-                    <span className="inline-flex items-center gap-2">
-                      <Upload className="w-4 h-4" />
-                      Choose CSV
-                    </span>
-                  </button>
-                  {busy && (
-                    <span className="inline-flex items-center gap-2 px-2 py-1 border rounded-lg text-sm">
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Parsing…
-                    </span>
-                  )}
-                  {!busy && !!rawRows.length && (
-                    <span className="px-2 py-1 border rounded-lg text-sm">Rows: {rawRows.length}</span>
-                  )}
-                  {fileInfo && (
-                    <span className="px-2 py-1 border rounded-lg text-sm bg-neutral-50">{fileInfo}</span>
-                  )}
-                  <button
-                    className="px-2 py-1 border rounded-lg text-sm"
-                    onClick={() => {
-                      setCsvHeaders([]);
-                      setRawRows([]);
-                      setFileInfo("");
-                    }}
-                  >
-                    <span className="inline-flex items-center gap-1">
-                      <RefreshCw className="w-4 h-4" />
-                      Reset
-                    </span>
-                  </button>
-                </div>
-
-                {!!csvHeaders.length && (
-                  <>
-                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                      {["city", "sku", "name", "systemQty"].map((f) => (
-                        <div key={f}>
-                          <label className="text-sm">
-                            {
-                              {
-                                city: "City / Branch",
-                                sku: "SKU or Barcode",
-                                name: "Product / Variant Name",
-                                systemQty: "System Quantity",
-                              }[f]
-                            }
-                          </label>
-                          <select
-                            className="mt-1 w-full border rounded-lg px-3 py-2"
-                            value={mapping[f]}
-                            onChange={(e) =>
-                              setMapping((p) => ({ ...p, [f]: e.target.value }))
-                            }
-                          >
-                            <option value="">Select CSV column</option>
-                            {csvHeaders.map((h) => (
-                              <option key={h} value={h}>
-                                {h}
-                              </option>
-                            ))}
-                          </select>
-                          <p className="text-xs text-neutral-500 mt-1">Map to your CSV headers</p>
-                        </div>
-                      ))}
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                      <div>
-                        <label className="text-sm">Committed Quantity (optional)</label>
-                        <select
-                          className="mt-1 w-full border rounded-lg px-3 py-2"
-                          value={mapping.committedQty}
-                          onChange={(e) =>
-                            setMapping((p) => ({ ...p, committedQty: e.target.value }))
-                          }
-                        >
-                          <option value="">(None)</option>
-                          {csvHeaders.map((h) => (
-                            <option key={h} value={h}>
-                              {h}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-
-                    <div>
-                      <button
-                        className="w-full sm:w-auto px-4 py-2 rounded-lg bg-emerald-600 text-white disabled:opacity-50"
-                        disabled={!canSeed}
-                        onClick={seedSessionFromCsv}
-                      >
-                        Seed Session from CSV (Cloud)
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
-            </section>
-
+            {/* Upload + mapping section ... (keep from previous file) */}
             {/* Counting workspace */}
             <section className="bg-white border rounded-2xl shadow-sm">
               <div className="px-3 py-3 border-b flex items-center gap-2">
@@ -555,7 +416,7 @@ export default function App() {
               </div>
 
               <div className="p-3">
-                {/* --- Scan mode + field + clear --- */}
+                {/* Scan controls */}
                 <div className="mb-2 flex flex-col sm:flex-row sm:items-end gap-2">
                   <div className="flex-1">
                     <label className="text-sm font-medium block mb-1">SKU / Scan Barcode</label>
@@ -564,13 +425,14 @@ export default function App() {
                       placeholder="Focus here, then scan"
                       value={scanInput}
                       onChange={(e) => {
-                        setScanInput(e.target.value);
-                        scheduleAuto(submitScan);
+                        const v = e.target.value;
+                        setScanInput(v);
+                        scheduleAuto(v); // instant filter/count using current value
                       }}
                       onKeyDown={(e) => {
                         if (e.key === "Enter") {
                           if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
-                          submitScan();
+                          submitScan(e.currentTarget.value);
                         }
                       }}
                       autoFocus
@@ -593,7 +455,6 @@ export default function App() {
                       value={scanMode}
                       onChange={(e) => {
                         setScanMode(e.target.value);
-                        // reset state switching modes
                         setScanInput("");
                         setFilterSku("");
                         setScanLog([]);
@@ -625,21 +486,22 @@ export default function App() {
                   </div>
                 )}
 
+                {/* TABLE: mobile-friendly grid; hide SKU/Barcode on mobile */}
                 <div className="border rounded-2xl overflow-hidden">
-                  <div className="grid grid-cols-12 bg-neutral-100 text-xs font-semibold px-3 py-2">
-                    <div className="col-span-3">SKU/Barcode</div>
-                    <div className="col-span-5">Name</div>
+                  <div className="grid grid-cols-9 sm:grid-cols-12 bg-neutral-100 text-xs font-semibold px-3 py-2">
+                    <div className="hidden sm:block sm:col-span-3">SKU/Barcode</div>
+                    <div className="col-span-5 sm:col-span-5">Name</div>
                     <div className="col-span-1 text-right">System</div>
                     <div className="col-span-1 text-right">Committed</div>
                     <div className="col-span-2 text-right">Counted</div>
                   </div>
                   <div className="max-h-[480px] overflow-auto divide-y">
                     {filtered.map((r) => (
-                      <div key={r.id} className="grid grid-cols-12 items-center px-3 py-2 text-sm">
-                        <div className="col-span-3 font-mono truncate" title={r.sku}>
+                      <div key={`${r.id || r.sku}`} className="grid grid-cols-9 sm:grid-cols-12 items-center px-3 py-2 text-sm">
+                        <div className="hidden sm:block sm:col-span-3 font-mono truncate" title={r.sku}>
                           {r.sku}
                         </div>
-                        <div className="col-span-5 truncate" title={r.name}>
+                        <div className="col-span-5 sm:col-span-5 truncate" title={r.name}>
                           {r.name}
                         </div>
                         <div className="col-span-1 text-right tabular-nums">{r.system_qty}</div>
@@ -669,7 +531,10 @@ export default function App() {
                     ))}
                     {!filtered.length && (
                       <div className="p-6 text-center text-sm text-neutral-500">
-                        No items to show for {city}. {scanMode === "filter" && filterSku ? "Clear the filter or scan a different SKU." : "Seed CSV or pick a different session."}
+                        No items to show for {city}.{" "}
+                        {scanMode === "filter" && filterSku
+                          ? "Clear the filter or scan a different SKU."
+                          : "Seed CSV or pick a different session."}
                       </div>
                     )}
                   </div>
@@ -678,7 +543,7 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Totals + export */}
+                {/* Totals + export (unchanged) */}
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                   <div className="flex flex-wrap items-center gap-2 text-sm">
                     <span className="px-2 py-1 border rounded-lg">Lines {totals.lines}</span>
@@ -699,7 +564,7 @@ export default function App() {
           </>
         )}
 
-        {/* DESTRUCTIONS PAGE ONLY */}
+        {/* DESTRUCTIONS PAGE (kept same mobile tweak for columns if you want later) */}
         {page === "destructions" && !!sessionId && (
           <section className="bg-white border rounded-2xl shadow-sm">
             <div className="px-3 py-3 border-b flex items-center gap-2">
@@ -708,7 +573,7 @@ export default function App() {
             </div>
 
             <div className="p-3 space-y-4">
-              {/* --- Destructions scan/search --- */}
+              {/* Scan/search on destructions */}
               <div className="flex flex-col sm:flex-row sm:items-end gap-2">
                 <div className="flex-1">
                   <label className="text-sm font-medium block mb-1">SKU / Scan Barcode</label>
@@ -717,13 +582,14 @@ export default function App() {
                     placeholder="Focus here, then scan"
                     value={dScanInput}
                     onChange={(e) => {
-                      setDScanInput(e.target.value);
-                      scheduleDAuto(submitDScan);
+                      const v = e.target.value;
+                      setDScanInput(v);
+                      scheduleDAuto(v);
                     }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
                         if (dScanTimerRef.current) clearTimeout(dScanTimerRef.current);
-                        submitDScan();
+                        submitDScan(e.currentTarget.value);
                       }
                     }}
                   />
@@ -787,23 +653,23 @@ export default function App() {
               </div>
 
               <div className="border rounded-2xl overflow-hidden">
-                <div className="grid grid-cols-12 bg-neutral-100 text-xs font-semibold px-3 py-2">
-                  <div className="col-span-3">SKU/Barcode</div>
-                  <div className="col-span-5">Name</div>
-                  <div className="col-span-2 text-right">Destroyed</div>
-                  <div className="col-span-2 text-right">Action</div>
+                <div className="grid grid-cols-9 sm:grid-cols-12 bg-neutral-100 text-xs font-semibold px-3 py-2">
+                  <div className="hidden sm:block sm:col-span-3">SKU/Barcode</div>
+                  <div className="col-span-5 sm:col-span-5">Name</div>
+                  <div className="col-span-2 sm:col-span-2 text-right">Destroyed</div>
+                  <div className="col-span-2 sm:col-span-2 text-right">Action</div>
                 </div>
                 <div className="max-h-[360px] overflow-auto divide-y">
                   {destructions.map((d) => (
-                    <div key={d.id} className="grid grid-cols-12 items-center px-3 py-2 text-sm">
-                      <div className="col-span-3 font-mono truncate" title={d.sku}>
+                    <div key={d.id} className="grid grid-cols-9 sm:grid-cols-12 items-center px-3 py-2 text-sm">
+                      <div className="hidden sm:block sm:col-span-3 font-mono truncate" title={d.sku}>
                         {d.sku}
                       </div>
-                      <div className="col-span-5 truncate" title={d.name}>
+                      <div className="col-span-5 sm:col-span-5 truncate" title={d.name}>
                         {d.name}
                       </div>
-                      <div className="col-span-2 text-right">{d.qty}</div>
-                      <div className="col-span-2 text-right">
+                      <div className="col-span-2 sm:col-span-2 text-right">{d.qty}</div>
+                      <div className="col-span-2 sm:col-span-2 text-right">
                         <button className="px-2 py-1 border rounded-lg" onClick={() => removeDestruction(d.id)}>
                           Remove
                         </button>
