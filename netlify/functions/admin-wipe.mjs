@@ -1,5 +1,5 @@
 // netlify/functions/admin-wipe.mjs
-import { getStore } from '@netlify/blobs';
+import { listStores, getStore } from '@netlify/blobs';
 
 export const handler = async (event) => {
   const key = event.queryStringParameters?.key || '';
@@ -16,7 +16,6 @@ export const handler = async (event) => {
     };
   }
 
-  // Manual Blobs context (fixes MissingBlobsEnvironmentError)
   const siteID = process.env.NETLIFY_SITE_ID;
   const token = process.env.NETLIFY_API_TOKEN;
   if (!siteID || !token) {
@@ -27,16 +26,18 @@ export const handler = async (event) => {
     };
   }
 
-  const namespaces = ['sessions', 'counts', 'destructions', 'mapping'];
+  const allStores = await listStores({ siteID, token });
   const summary = {};
 
-  for (const ns of namespaces) {
-    const store = getStore({ name: ns, siteID, token });
-    const { blobs } = await store.list(); // [{ key }]
-    summary[ns] = { before: blobs.length, deleted: 0 };
+  for (const s of allStores.stores) {
+    const name = s.name;
+    const store = getStore({ name, siteID, token });
+    const { blobs } = await store.list();
+    summary[name] = { before: blobs.length, deleted: 0 };
+
     for (const b of blobs) {
       await store.delete(b.key);
-      summary[ns].deleted += 1;
+      summary[name].deleted += 1;
     }
   }
 
